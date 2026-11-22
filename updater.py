@@ -33,12 +33,14 @@ DEFAULT_BRANCH = "main"
 DEFAULT_BASE = "https://raw.githubusercontent.com/{repo}/{branch}/{name}"
 
 MANIFEST_NAME = "update.json"
-BACKUP_ROOT = "updates/backup"
-TMP_ROOT = "updates/tmp"
-STATE_PATH = "updates/state.json"
+# 备份/临时/状态目录都锚在程序目录，不随启动目录变
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BACKUP_ROOT = os.path.join(BASE_DIR, "updates", "backup")
+TMP_ROOT = os.path.join(BASE_DIR, "updates", "tmp")
+STATE_PATH = os.path.join(BASE_DIR, "updates", "state.json")
 
-# 只允许这些文件被更新覆盖，防止清单里塞进奇怪路径
-ALLOWED_FILES = {"main_os.py", "app_store.py", "pvz.py", "updater.py"}
+# 只允许下发程序目录下的 .py 文件（见 Installer._target）。
+# 数据文件（installed_apps.json / settings.json / userdata.txt）永远不会被覆盖。
 MAX_FILE_BYTES = 8 * 1024 * 1024      # 单文件 8MB 上限，够用且防止被塞大文件
 
 
@@ -49,6 +51,15 @@ def base_url(repo=DEFAULT_REPO, branch=DEFAULT_BRANCH):
         return override
     # 这里要留着 {name} 给后面拼文件名，所以不能用 str.format
     return DEFAULT_BASE.replace("{repo}", repo).replace("{branch}", branch)
+
+
+# 国内访问 raw.githubusercontent.com 经常 SSL 握手超时，所以准备多条通道。
+# 顺序按实测可达性排：jsDelivr（按 commit 锁定，不会读到 CDN 旧缓存）→ 代理 → 官方 raw。
+JSDELIVR_BASE = "https://cdn.jsdelivr.net/gh/{repo}@{rev}/{name}"
+PROXY_BASE = "https://ghfast.top/https://raw.githubusercontent.com/{repo}/{branch}/{name}"
+COMMITS_API = "https://api.github.com/repos/{repo}/commits/{branch}"
+
+_NO_REV = object()   # 未解析过的哨兵
 
 
 def ver_tuple(text):
@@ -94,35 +105,83 @@ class Net:
         self.timeout = timeout
         self.retries = retries
         self.base = base_url(repo, branch)
+        self.override = bool(os.environ.get("MINIOS_UPDATE_BASE"))
+        self._rev = _NO_REV
+        self.last_source = None      # 记录最后成功的通道，窗口里能显示
 
+    # ---------- 通道选择 ----------
+    def head_rev(self):
+        """取分支最新 commit sha，只请求一次。取不到就返回 None（退回按分支名拉）。"""
+        if self._rev is not _NO_REV:
+            return self._rev
+        self._rev = None
+        if self.override:
+            return None
+        try:
+            req = urllib.request.Request(
+                COMMITS_API.format(repo=self.repo, branch=self.branch),
+                headers={
+                    "User-Agent": "MiniOS-Updater/1.0",
+                    "Accept": "application/vnd.github+json",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                data = json.loads(resp.read(1 << 20).decode("utf-8"))
+            sha = data.get("sha") if isinstance(data, dict) else None
+            if isinstance(sha, str) and len(sha) >= 7:
+                self._rev = sha
+        except Exception:
+            pass
+        return self._rev
+
+    def urls_for(self, name):
+        """该文件的候选地址，按可达性排序"""
+        if self.override:
+            base = self.base
+            return [base.format(name=name) if "{name}" in base else base + name]
+        urls = []
+        rev = self.head_rev()
+        if rev:
+            urls.append(JSDELIVR_BASE.format(repo=self.repo, rev=rev, name=name))
+        # 没有 sha 时 jsDelivr 只能按分支名取，可能拿到 CDN 旧缓存，所以放在代理之后
+        urls.append(PROXY_BASE.format(repo=self.repo, branch=self.branch, name=name))
+        if not rev:
+            urls.insert(0, JSDELIVR_BASE.format(repo=self.repo, rev=self.branch, name=name))
+        urls.append(self.base.format(name=name) if "{name}" in self.base else self.base + name)
+        return urls
+
+    # ---------- 下载 ----------
     def get_bytes(self, name):
-        url = self.base.format(name=name) if "{name}" in self.base else self.base + name
         last = None
-        for attempt in range(self.retries + 1):
-            try:
-                req = urllib.request.Request(
-                    url,
-                    headers={
-                        "User-Agent": "MiniOS-Updater/1.0",
-                        "Cache-Control": "no-cache",
-                    },
-                )
-                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                    data = resp.read(MAX_FILE_BYTES + 1)
-                if len(data) > MAX_FILE_BYTES:
-                    raise ValueError(f"{name} 超过 {MAX_FILE_BYTES // 1024 // 1024}MB 上限")
-                return data
-            except urllib.error.HTTPError as e:
-                last = e
-                if e.code in (401, 403, 404):
-                    raise RuntimeError(
-                        f"{name} 返回 {e.code}：仓库不存在、未公开，或文件名写错"
+        for url in self.urls_for(name):
+            for attempt in range(self.retries + 1):
+                try:
+                    req = urllib.request.Request(
+                        url,
+                        headers={
+                            "User-Agent": "MiniOS-Updater/1.0",
+                            "Cache-Control": "no-cache",
+                        },
                     )
-                time.sleep(0.8 * (attempt + 1))
-            except Exception as e:
-                last = e
-                time.sleep(0.8 * (attempt + 1))
-        raise RuntimeError(f"下载 {name} 失败（重试 {self.retries} 次）：{last}")
+                    with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                        data = resp.read(MAX_FILE_BYTES + 1)
+                    if len(data) > MAX_FILE_BYTES:
+                        raise ValueError(f"{name} 超过 {MAX_FILE_BYTES // 1024 // 1024}MB 上限")
+                    self.last_source = url
+                    return data
+                except urllib.error.HTTPError as e:
+                    last = e
+                    if e.code in (401, 403, 404):
+                        # 这个通道没有该文件，换下一条通道试试
+                        last = RuntimeError(
+                            f"{name} 返回 {e.code}：仓库不存在、未公开，或文件名写错（{url}）"
+                        )
+                        break
+                    time.sleep(0.6 * (attempt + 1))
+                except Exception as e:
+                    last = e
+                    time.sleep(0.6 * (attempt + 1))
+        raise RuntimeError(f"下载 {name} 失败（已尝试所有通道）：{last}")
 
     def get_manifest(self):
         raw = self.get_bytes(MANIFEST_NAME)
@@ -147,10 +206,18 @@ class Installer:
         self.state_path = os.path.join(self.root, STATE_PATH)
 
     def _target(self, name):
-        if name not in ALLOWED_FILES:
-            raise RuntimeError(f"清单里有不允许更新的文件：{name}")
+        """只放行程序目录下的 .py 文件：数据文件（.json/.txt）永远不碰。
+
+        以前这里比对写死的小名单，一改结构（比如把 main_os 拆成几个模块）
+        旧客户端就会因为「清单里有不认识的文件」整次中止。改成规则校验后，
+        以后怎么拆分模块都不用再改更新器。
+        """
+        if not isinstance(name, str) or not name.strip():
+            raise RuntimeError("清单里的文件名不合法")
         if os.path.basename(name) != name:
             raise RuntimeError(f"文件名不能带路径：{name}")
+        if not name.endswith(".py") or name.startswith("_"):
+            raise RuntimeError(f"只允许下发 .py 文件：{name}")
         return os.path.join(self.root, name)
 
     def download_all(self, manifest, net, progress=None):
@@ -199,11 +266,17 @@ class Installer:
 
     def write_state(self, manifest, backup_dir):
         os.makedirs(os.path.dirname(self.state_path), exist_ok=True)
+        # 备份目录通常在程序目录下，存相对路径便于整体搬迁；
+        # 但万一不在同一个盘（relpath 会抛 ValueError），就老实存绝对路径。
+        try:
+            backup_ref = os.path.relpath(backup_dir, self.root)
+        except ValueError:
+            backup_ref = os.path.abspath(backup_dir)
         state = {
             "pending_restart": True,
             "installed_version": manifest.get("version", ""),
             "installed_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "backup_dir": os.path.relpath(backup_dir, self.root),
+            "backup_dir": backup_ref,
             "files": sorted(manifest["files"].keys()
                             if isinstance(manifest["files"], dict)
                             else [f["name"] for f in manifest["files"]]),
@@ -232,9 +305,14 @@ class Installer:
             raise RuntimeError("没有找到任何备份，无法回滚")
         restored = []
         for name in sorted(os.listdir(bdir)):
-            if name in ALLOWED_FILES:
-                shutil.copy2(os.path.join(bdir, name), self._target(name))
-                restored.append(name)
+            # 与 _target 同一套规则：备份里有什么 .py 就恢复什么
+            if not name.endswith(".py") or name.startswith("_"):
+                continue
+            src = os.path.join(bdir, name)
+            if not os.path.isfile(src):
+                continue
+            shutil.copy2(src, self._target(name))
+            restored.append(name)
         if not restored:
             raise RuntimeError("最近那份备份里没有可恢复的文件")
         try:

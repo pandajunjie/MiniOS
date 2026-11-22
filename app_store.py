@@ -36,7 +36,8 @@ except ImportError:
         START_BG = "#0d0d1a"
         START_HOVER = "#1e4d8c"
 
-INSTALLED_FILE = "installed_apps.json"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+INSTALLED_FILE = os.path.join(BASE_DIR, "installed_apps.json")
 
 # ==========================================
 # 应用注册表：完全自包含的插件系统
