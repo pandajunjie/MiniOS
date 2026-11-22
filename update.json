@@ -1,0 +1,24 @@
+{
+  "version": "2.0",
+  "notes": [
+    "更新到 v2.0"
+  ],
+  "files": {
+    "app_store.py": {
+      "sha256": "242ce5bddec16b040ff5364195f782f19ade927b3d058e0048fdc3ba713eee31",
+      "size": 80382
+    },
+    "main_os.py": {
+      "sha256": "2280e3ac53bc999de7ca3cb3acc89bcdc210524676357e9678f4e952b65e86ee",
+      "size": 101962
+    },
+    "pvz.py": {
+      "sha256": "78656237a0a0deec9720044e54be939eeb02ff72a5d0479b6e2f195c4df97e42",
+      "size": 25005
+    },
+    "updater.py": {
+      "sha256": "dd05db9dd3ae427c835ce4ec858e266d7ab9972f74a304d768ee88d274551b60",
+      "size": 21127
+    }
+  }
+}

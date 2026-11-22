@@ -314,6 +314,7 @@ class MiniOSGUI:
 
         self._setup_styles()
         self._build_taskbar()
+        self.root.after(1500, self._update_boot_notice)
         
         # 创建存放图标的容器
         self.icons_container = tk.Frame(self.bg, bg=self.current_wallpaper)
@@ -1416,7 +1417,10 @@ class MiniOSGUI:
         g5 = make_group("ℹ️ 系统信息")
         tk.Label(g5, text=self._system_info_text(), font=("微软雅黑", 9),
                  bg=Theme.BG_MAIN, fg=Theme.TEXT_DIM,
-                 justify="left").pack(anchor="w", padx=12, pady=(4, 8))
+                 justify="left").pack(anchor="w", padx=12, pady=(4, 4))
+
+        HoverButton(g5, "🔄 检查系统更新", self.system_update, Theme.BTN_PRIMARY,
+                    width=14).pack(anchor="w", padx=12, pady=(0, 8))
 
         # ================= 底部按钮 =================
         bar = tk.Frame(content, bg=Theme.BG_MAIN)
@@ -1488,6 +1492,25 @@ class MiniOSGUI:
                 f"应用：已安装 {apps} 个，桌面显示 {desk} 个\n"
                 f"虚拟磁盘：{len(names)} 个文件，占用 {total / 1024:.1f} KB\n"
                 f"框架：Python + Tkinter，插件化 App Store")
+
+    # ====================== 系统更新 ======================
+    def system_update(self):
+        """打开系统更新窗口（从 GitHub 拉取新版本）"""
+        try:
+            from updater import open_updater
+            open_updater(self)
+        except Exception as e:
+            messagebox.showerror("更新模块不可用",
+                                 f"无法加载 updater 模块：\n{e}\n"
+                                 "请确认 updater.py 与 main_os.py 在同一目录。")
+
+    def _update_boot_notice(self):
+        """启动后检查上次更新结果，有就弹一条 Toast"""
+        try:
+            from updater import boot_notice
+            boot_notice(self)
+        except Exception:
+            pass
 
     # ====================== 基础应用 ======================
     def file_manager(self):
