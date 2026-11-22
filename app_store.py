@@ -83,7 +83,7 @@ APP_REGISTRY = {
         "launcher": "TODO"
     },
     "tool_sysinfo": {
-        "icon": "📊", "name": "系统信息",
+        "icon": "🖥️", "name": "系统信息",
         "desc": "查看系统版本、CPU 核心、内存、磁盘占用等硬件信息。",
         "author": "实用工具组", "version": "v1.0",
         "launcher": "SYSINFO"

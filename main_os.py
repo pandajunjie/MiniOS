@@ -1,5 +1,5 @@
 """
-MiniOS Lite v2.1 - 完整核心主系统
+MiniOS Lite v2.2 - 完整核心主系统
 功能：动态 App Store 支持、模块化管理、精美 UI、所有基础工具
 """
 
@@ -18,7 +18,17 @@ from tkinter import font as tkfont
 # 配色表和悬停按钮已抽到 minios_ui.py，两处共用一套
 from minios_ui import Theme, HoverButton
 from apps_basic import AppMixin
-SYS_NAME = "MiniOS Lite v2.1"
+from apps_weather import WeatherMixin
+
+# 桌面图标的彩色 PNG（base64）。Tk 8.6 在 Windows 上没法把 emoji 画成彩色，
+# 只显示单色轮廓，所以图标走图片。缺文件就退回文本 emoji，不影响启动。
+try:
+    from icons_data import ICONS as _ICON_DATA, PETS as _PET_DATA
+except Exception:
+    _ICON_DATA = {}
+    _PET_DATA = {}
+
+SYS_NAME = "MiniOS Lite v2.2"
 
 # 所有数据都存放于程序所在目录，跟启动位置（当前工作目录）无关。
 # 这样双击、快捷方式、命令行启动都指向同一份数据，也方便整体搬迁。
@@ -61,7 +71,7 @@ if not os.path.exists(DISK_PATH):
 if not os.path.exists(USER_DB_PATH):
     with open(USER_DB_PATH, "w", encoding="utf-8") as f:
         f.write("admin|123456\n")
-class MiniOSGUI(AppMixin):
+class MiniOSGUI(AppMixin, WeatherMixin):
     def __init__(self, root):
         self.root = root
         # 应用方法里通过 self 取这些常量，方便以后改路径
@@ -79,6 +89,7 @@ class MiniOSGUI(AppMixin):
         self.login_user = ""
         self._after_ids = set()
         self._open_windows = set()
+        self._icon_cache = {}         # 桌面图标 PhotoImage，必须留引用否则会被回收
         self._desktop_sig = None      # 桌面图标内容签名，用于跳过无意义重建
         self._last_time_text = ""     # 上次显示的时间文本，避免每秒重复重绘
         self.start_menu_open = False
@@ -307,15 +318,53 @@ class MiniOSGUI(AppMixin):
         """右下角的小宠物：每几秒动一下，点它会叫，右键能换品种"""
         self.pet_kind = "cat"
         self.pet_hidden = False
-        self.pet_label = tk.Label(self.bg, text="🐱",
-                                  font=("Segoe UI Emoji", 26),
-                                  bg=self.current_wallpaper,
-                                  cursor="hand2", bd=0)
+        start_img = self._pet_image("🐱")
+        if start_img is not None:
+            self.pet_label = tk.Label(self.bg, image=start_img,
+                                      bg=self.current_wallpaper,
+                                      cursor="hand2", bd=0)
+        else:
+            self.pet_label = tk.Label(self.bg, text="🐱",
+                                      font=("Segoe UI Emoji", 26),
+                                      bg=self.current_wallpaper,
+                                      cursor="hand2", bd=0)
         self.pet_label.place(relx=1.0, rely=1.0, x=-26, y=-62, anchor="se")
         self.pet_label.bind("<Button-1>", lambda e: self._pet_poke())
         self.pet_label.bind("<Button-3>", self._pet_menu)
         self._pet_dock_sync()
         self._pet_tick()
+
+    def _pet_image(self, emoji):
+        """宠物帧的彩色图片（48px）。没图返回 None。"""
+        b64 = _PET_DATA.get(emoji)
+        if not b64:
+            return None
+        cache = getattr(self, "_pet_cache", None)
+        if cache is None:
+            cache = self._pet_cache = {}
+        img = cache.get(emoji)
+        if img is not None:
+            return img
+        try:
+            img = tk.PhotoImage(data=b64)
+        except Exception:
+            return None
+        cache[emoji] = img
+        return img
+
+    def _pet_set_face(self, emoji):
+        """切换宠物表情：优先彩色图片，没图就退回 emoji 文本。"""
+        if not self._alive(getattr(self, "pet_label", None)):
+            return
+        img = self._pet_image(emoji)
+        try:
+            if img is not None:
+                self.pet_label.config(image=img, text="")
+            else:
+                self.pet_label.config(image="", text=emoji,
+                                      font=("Segoe UI Emoji", 26))
+        except Exception:
+            pass
 
     def _pet_tick(self):
         """每 4 秒换个表情并轻轻弹一下"""
@@ -326,7 +375,7 @@ class MiniOSGUI(AppMixin):
             return
         frames = self.PET_FRAMES.get(self.pet_kind, ("🐱",))
         try:
-            self.pet_label.config(text=random.choice(frames))
+            self._pet_set_face(random.choice(frames))
             self.pet_label.place_configure(y=-70)
             self.safe_after(260, self._pet_settle)
         except Exception:
@@ -346,10 +395,7 @@ class MiniOSGUI(AppMixin):
         if not self._alive(getattr(self, "pet_label", None)):
             return
         cat = self.pet_kind == "cat"
-        try:
-            self.pet_label.config(text="😻" if cat else "🐕")
-        except Exception:
-            pass
+        self._pet_set_face("😻" if cat else "🐕")
         self._pet_say("喵～" if cat else "汪！")
         self._pet_beep()
 
@@ -411,10 +457,7 @@ class MiniOSGUI(AppMixin):
     def _set_pet(self, kind):
         self.pet_kind = kind
         frames = self.PET_FRAMES.get(kind, ("🐱",))
-        try:
-            self.pet_label.config(text=frames[0])
-        except Exception:
-            pass
+        self._pet_set_face(frames[0])
         self.toast(f"宠物换成{self.PET_KIND_NAME.get(kind, kind)}了", icon="🐾")
 
     def _pet_hide(self):
@@ -631,6 +674,7 @@ class MiniOSGUI(AppMixin):
             ("📝", "记事本", self.notepad),
             ("🔢", "计算器", self.calculator),
             ("⏱", "倒计时", self.timer_tool),
+            ("🌤️", "天气预报", self.weather),
         ]
 
         # 读取 App Store 已安装的应用
@@ -642,6 +686,10 @@ class MiniOSGUI(AppMixin):
             all_apps.append(("🛍️", "App Store", self.app_store.open))
         all_apps.append(("📊", "进程管理器", self.task_manager))
         all_apps.append(("⚙️", "设置中心", self.settings))
+
+        # 商店里有些应用其实就是系统自带的（比如贪吃蛇），合并后按名字去重，
+        # 避免同一个应用在桌面上出现两个图标
+        all_apps = self._dedup_apps(all_apps)
 
         self._create_icon_grid(self.icons_container, all_apps, rows=ICON_ROWS)
 
@@ -689,6 +737,44 @@ class MiniOSGUI(AppMixin):
                      bg=Theme.BG_PANEL, fg=Theme.TEXT_DIM).pack(pady=2)
 
     # ====================== Windows 风格图标网格 ======================
+    @staticmethod
+    def _dedup_apps(items):
+        """按应用名去重，保留先出现的那个。
+
+        App Store 里有些条目其实就是系统自带应用（例如 game_snake 贪吃蛇），
+        装过之后会往桌面/开始菜单再塞一遍，导致同一个应用出现两个图标。
+        """
+        seen = set()
+        result = []
+        for item in items:
+            try:
+                name = item[1]
+            except Exception:
+                continue
+            if name in seen:
+                continue
+            seen.add(name)
+            result.append(item)
+        return result
+
+    def _icon_image(self, name):
+        """取应用名对应的彩色图标（PhotoImage）。没有就返回 None，由调用方退回文本。"""
+        b64 = _ICON_DATA.get(name)
+        if not b64:
+            return None
+        cache = getattr(self, "_icon_cache", None)
+        if cache is None:
+            cache = self._icon_cache = {}
+        img = cache.get(name)
+        if img is not None:
+            return img
+        try:
+            img = tk.PhotoImage(data=b64)
+        except Exception:
+            return None
+        cache[name] = img
+        return img
+
     def _create_icon_grid(self, parent, apps, rows=ICON_ROWS):
         """像 Windows 桌面那样：先从上往下填满一列，再往右边起新的一列。
         列数超过窗口宽度时，自动往每列里多塞几个，避免图标跑出屏幕。"""
@@ -718,10 +804,17 @@ class MiniOSGUI(AppMixin):
             cell.pack_propagate(False)
             cell.grid_propagate(False)
 
-            glyph = tk.Label(cell, text=icon, font=("Segoe UI Emoji", 21),
-                             bg=self.current_wallpaper, fg=Theme.TEXT,
-                             cursor="hand2", bd=0)
-            glyph.pack(pady=(9, 1))
+            # 优先用彩色图标；拿不到就退回 emoji 文本（虽然会显示成单色）
+            img = self._icon_image(name)
+            if img is not None:
+                glyph = tk.Label(cell, image=img, bg=self.current_wallpaper,
+                                 cursor="hand2", bd=0)
+                glyph.pack(pady=(8, 0))
+            else:
+                glyph = tk.Label(cell, text=icon, font=("Segoe UI Emoji", 21),
+                                 bg=self.current_wallpaper, fg=Theme.TEXT,
+                                 cursor="hand2", bd=0)
+                glyph.pack(pady=(9, 1))
 
             caption = tk.Label(cell, text=name, font=("微软雅黑", 9),
                                bg=self.current_wallpaper, fg=Theme.TEXT,
@@ -1206,6 +1299,7 @@ class MiniOSGUI(AppMixin):
             ("⚫", "五子棋", self.game_gobang),
             ("💣", "扫雷", self.game_mine),
             ("🎨", "更换壁纸", self.change_wallpaper),
+            ("🌤️", "天气预报", self.weather),
         ]
 
         # 2. 动态加入已安装的第三方应用（如果你刚才截图里的代码在这，那就把它留下，但一定要加上 try-except）
@@ -1219,6 +1313,9 @@ class MiniOSGUI(AppMixin):
         # 3. 永远保底 App Store 入口
         if getattr(self, 'app_store', None):
             self.all_apps.append(("🛍️", "App Store", self.app_store.open))
+
+        # 4. 商店里装的内置应用（如贪吃蛇）会和上面本来就有的条目重名，去重一下
+        self.all_apps = self._dedup_apps(self.all_apps)
 
         self.menu_filtered = list(self.all_apps)
         self._populate_menu(self.all_apps)
