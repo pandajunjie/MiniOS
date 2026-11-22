@@ -1,32 +1,40 @@
 {
-  "version": "2.1",
+  "version": "2.2",
   "notes": [
-    "更新到 v2.1"
+    "更新到 v2.2"
   ],
   "files": {
     "main_os.py": {
-      "sha256": "0ef7fb940756dcfa2b49fedbae9f092764214475e66ab152dfdfba00be949a29",
-      "size": 73279
+      "sha256": "72a68f2eb9c4145cb3b3a32ac05c5d03370de0bfd6bcbc5d70b169b031903083",
+      "size": 77165
     },
     "apps_basic.py": {
       "sha256": "ab14428ec050c5f344f53152b79ea864c281ba8e1a87926723fc306792d02e19",
       "size": 45350
     },
+    "apps_weather.py": {
+      "sha256": "fc1faa15d702e16f24bc9564bfb1f5e03308b4f4d129001af29471103bdc541a",
+      "size": 12293
+    },
     "minios_ui.py": {
       "sha256": "2be2947f79c1b0a0a6d8b02ad9a0330ab80cf6383dc06495bf9f6549abeb1831",
       "size": 1856
     },
+    "icons_data.py": {
+      "sha256": "4b7e06860d2ecfa2fc7ccec2dd565b604728d2b26a469196b282100ae7ecf6e7",
+      "size": 117473
+    },
     "app_store.py": {
-      "sha256": "aa736fb8a3eb021c0807090cae1be84f0f58f40cf77cb38a627b736cf5ca7baf",
-      "size": 80460
+      "sha256": "87c273ffabc49e5474bf56c9b3d7d023b0ecfccd46c4c20f6db9a358c2246504",
+      "size": 80463
     },
     "pvz.py": {
       "sha256": "78656237a0a0deec9720044e54be939eeb02ff72a5d0479b6e2f195c4df97e42",
       "size": 25005
     },
     "updater.py": {
-      "sha256": "b180c05d2e8c08cee8a5d739f5f2fc9c6523e2591008a4adae281c5aeed27f87",
-      "size": 25107
+      "sha256": "c1817aeafb52dd8d303f786058547fa7d2da6c5c21cf0d590b9a98b7daba475b",
+      "size": 39760
     }
   }
 }
